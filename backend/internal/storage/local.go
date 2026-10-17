@@ -10,13 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 )
-
-// Local хранит файлы в папке на диске (в Docker — в volume).
-// Подходит для разработки и небольших установок; для нескольких экземпляров API нужен S3.
 type Local struct {
 	root string
 }
-
 func NewLocal(root string) (*Local, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -27,8 +23,6 @@ func NewLocal(root string) (*Local, error) {
 	}
 	return &Local{root: abs}, nil
 }
-
-// path не даёт выйти за пределы корневой папки (защита от ключей вида ../../etc)
 func (l *Local) path(key string) (string, error) {
 	p := filepath.Join(l.root, filepath.FromSlash(key))
 	if !strings.HasPrefix(p, l.root+string(os.PathSeparator)) {

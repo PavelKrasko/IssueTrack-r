@@ -1,8 +1,3 @@
--- Планирование и совместная работа:
--- иерархия задач, спринты, версии (релизы), учёт времени,
--- комментарии с @упоминаниями, наблюдатели, уведомления, Telegram.
-
--- ── Версии (релизы) ─────────────────────────────────────────────────
 CREATE TABLE versions (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id   uuid        NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -17,7 +12,6 @@ CREATE TABLE versions (
 CREATE UNIQUE INDEX versions_project_name_uniq ON versions (project_id, lower(name));
 CREATE TRIGGER versions_updated_at BEFORE UPDATE ON versions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- ── Спринты ─────────────────────────────────────────────────────────
 CREATE TYPE sprint_state AS ENUM ('planned', 'active', 'closed');
 
 CREATE TABLE sprints (
@@ -33,31 +27,25 @@ CREATE TABLE sprints (
   updated_at  timestamptz  NOT NULL DEFAULT now(),
   UNIQUE (id, project_id),
   CHECK (start_date IS NULL OR end_date IS NULL OR start_date <= end_date),
-  -- у активного спринта обязательно есть даты
   CHECK (state <> 'active' OR (start_date IS NOT NULL AND end_date IS NOT NULL))
 );
--- в проекте не больше одного активного спринта
 CREATE UNIQUE INDEX sprints_one_active ON sprints (project_id) WHERE state = 'active';
 CREATE INDEX sprints_project_idx ON sprints (project_id, created_at);
 CREATE TRIGGER sprints_updated_at BEFORE UPDATE ON sprints FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- ── Новые поля задачи ───────────────────────────────────────────────
 ALTER TABLE issues
   ADD COLUMN parent_id        uuid,
   ADD COLUMN sprint_id        uuid,
   ADD COLUMN fix_version_id   uuid,
   ADD COLUMN estimate_minutes integer CHECK (estimate_minutes BETWEEN 0 AND 100000),
   ADD CONSTRAINT issues_not_own_parent CHECK (parent_id <> id),
-  -- родитель — задача того же проекта; родителя удалили → подзадача становится самостоятельной
   ADD CONSTRAINT issues_parent_fk FOREIGN KEY (parent_id, project_id) REFERENCES issues (id, project_id) ON DELETE SET NULL (parent_id),
-  -- спринт удалили → задача возвращается в бэклог
   ADD CONSTRAINT issues_sprint_fk FOREIGN KEY (sprint_id, project_id) REFERENCES sprints (id, project_id) ON DELETE SET NULL (sprint_id),
   ADD CONSTRAINT issues_version_fk FOREIGN KEY (fix_version_id, project_id) REFERENCES versions (id, project_id) ON DELETE SET NULL (fix_version_id);
 CREATE INDEX issues_parent_idx  ON issues (parent_id);
 CREATE INDEX issues_sprint_idx  ON issues (sprint_id);
 CREATE INDEX issues_version_idx ON issues (fix_version_id);
 
--- ── Учёт времени ────────────────────────────────────────────────────
 CREATE TABLE worklogs (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   issue_id   uuid        NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
@@ -70,8 +58,6 @@ CREATE TABLE worklogs (
 CREATE INDEX worklogs_issue_idx ON worklogs (issue_id);
 CREATE INDEX worklogs_user_date_idx ON worklogs (user_id, work_date);
 
--- ── Комментарии ─────────────────────────────────────────────────────
--- Упоминание хранится в тексте как @[Имя](user:<uuid>)
 CREATE TABLE issue_comments (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   issue_id   uuid        NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
@@ -83,8 +69,6 @@ CREATE TABLE issue_comments (
 CREATE INDEX issue_comments_issue_idx ON issue_comments (issue_id, created_at);
 CREATE TRIGGER issue_comments_updated_at BEFORE UPDATE ON issue_comments FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- ── Наблюдатели ─────────────────────────────────────────────────────
--- Только участники проекта: ушёл из проекта → перестаёт наблюдать
 CREATE TABLE issue_watchers (
   issue_id   uuid        NOT NULL,
   project_id uuid        NOT NULL,
@@ -95,8 +79,6 @@ CREATE TABLE issue_watchers (
   FOREIGN KEY (project_id, user_id) REFERENCES project_members (project_id, user_id) ON DELETE CASCADE
 );
 CREATE INDEX issue_watchers_user_idx ON issue_watchers (user_id);
-
--- ── Уведомления ─────────────────────────────────────────────────────
 CREATE TABLE notifications (
   id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   user_id    uuid        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -110,8 +92,6 @@ CREATE TABLE notifications (
 );
 CREATE INDEX notifications_user_idx   ON notifications (user_id, created_at DESC);
 CREATE INDEX notifications_unread_idx ON notifications (user_id) WHERE read_at IS NULL;
-
--- ── Telegram ────────────────────────────────────────────────────────
 CREATE TABLE telegram_links (
   user_id   uuid PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
   chat_id   bigint      NOT NULL UNIQUE,
@@ -119,8 +99,6 @@ CREATE TABLE telegram_links (
   enabled   boolean     NOT NULL DEFAULT true,
   linked_at timestamptz NOT NULL DEFAULT now()
 );
-
--- Одноразовые коды привязки: пользователь открывает t.me/<бот>?start=<code>
 CREATE TABLE telegram_link_codes (
   code       text PRIMARY KEY,
   user_id    uuid        NOT NULL REFERENCES users (id) ON DELETE CASCADE,

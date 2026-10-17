@@ -1,10 +1,5 @@
--- IssueTracker: начальная схема БД (PostgreSQL 15+)
--- Миграции применяются по порядку имени файла, каждая — в своей транзакции.
-
-CREATE EXTENSION IF NOT EXISTS citext;   -- регистронезависимые email
-CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- быстрый поиск ILIKE по названиям
-
--- ── Справочники (enum) ──────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS citext;   
+CREATE EXTENSION IF NOT EXISTS pg_trgm;  
 CREATE TYPE project_role   AS ENUM ('owner', 'admin', 'member', 'viewer');
 CREATE TYPE issue_type     AS ENUM ('task', 'bug', 'story');
 CREATE TYPE issue_status   AS ENUM ('todo', 'in_progress', 'review', 'done');
@@ -13,7 +8,6 @@ CREATE TYPE doc_kind       AS ENUM ('file', 'link');
 CREATE TYPE doc_category   AS ENUM ('requirements', 'architecture', 'api', 'design', 'guides', 'other');
 CREATE TYPE oauth_provider AS ENUM ('google', 'github');
 
--- updated_at обновляется триггером
 CREATE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN
   NEW.updated_at = now();
@@ -21,7 +15,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ── Пользователи и вход ────────────────────────────────────────────
 CREATE TABLE users (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email         citext      NOT NULL UNIQUE,
@@ -35,7 +28,6 @@ CREATE TABLE users (
 );
 CREATE TRIGGER users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Привязанные аккаунты Google / GitHub
 CREATE TABLE oauth_accounts (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          uuid           NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -47,7 +39,6 @@ CREATE TABLE oauth_accounts (
   UNIQUE (user_id, provider)
 );
 
--- Сессии: refresh-токены (храним только SHA-256 хеш)
 CREATE TABLE sessions (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id            uuid        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -60,7 +51,6 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_user_idx ON sessions (user_id);
 
--- ── Проекты и участники ─────────────────────────────────────────────
 CREATE TABLE projects (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   key           varchar(10) NOT NULL UNIQUE CHECK (key ~ '^[A-Z][A-Z0-9]{1,9}$'),
@@ -81,11 +71,9 @@ CREATE TABLE project_members (
   PRIMARY KEY (project_id, user_id)
 );
 CREATE INDEX project_members_user_idx ON project_members (user_id);
--- ровно один владелец на проект
+
 CREATE UNIQUE INDEX project_one_owner ON project_members (project_id) WHERE role = 'owner';
 
--- Приглашения по email для тех, кто ещё не зарегистрирован.
--- При регистрации/входе с этим email приглашение превращается в членство.
 CREATE TABLE project_invites (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id uuid         NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -97,7 +85,6 @@ CREATE TABLE project_invites (
 );
 CREATE INDEX project_invites_email_idx ON project_invites (email);
 
--- ── Команды ─────────────────────────────────────────────────────────
 CREATE TABLE teams (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id  uuid        NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -110,8 +97,6 @@ CREATE TABLE teams (
 CREATE UNIQUE INDEX teams_project_name_idx ON teams (project_id, lower(name));
 CREATE TRIGGER teams_updated_at BEFORE UPDATE ON teams FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Участник команды обязан быть участником проекта: составной FK на project_members.
--- Исключили человека из проекта — он автоматически пропадает из всех команд.
 CREATE TABLE team_members (
   team_id    uuid        NOT NULL,
   project_id uuid        NOT NULL,
@@ -123,11 +108,10 @@ CREATE TABLE team_members (
   FOREIGN KEY (project_id, user_id)    REFERENCES project_members (project_id, user_id)   ON DELETE CASCADE
 );
 
--- ── Задачи ─────────────────────────────────────────────────────────
 CREATE TABLE issues (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id   uuid           NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
-  number       integer        NOT NULL,                 -- ключ задачи = projects.key || '-' || number
+  number       integer        NOT NULL,               
   title        text           NOT NULL CHECK (char_length(title) BETWEEN 1 AND 255),
   description  text           NOT NULL DEFAULT '',
   type         issue_type     NOT NULL DEFAULT 'task',
@@ -156,7 +140,6 @@ CREATE INDEX issues_project_due_idx    ON issues (project_id, due_date);
 CREATE INDEX issues_title_trgm_idx     ON issues USING gin (title gin_trgm_ops);
 CREATE TRIGGER issues_updated_at BEFORE UPDATE ON issues FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Вложения-изображения задачи. Сам файл — в S3/MinIO по storage_key.
 CREATE TABLE issue_attachments (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   issue_id     uuid        NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
@@ -169,7 +152,6 @@ CREATE TABLE issue_attachments (
 );
 CREATE INDEX issue_attachments_issue_idx ON issue_attachments (issue_id);
 
--- История изменений задачи (кто, когда, что поменял)
 CREATE TABLE issue_events (
   id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   issue_id   uuid        NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
@@ -180,7 +162,6 @@ CREATE TABLE issue_events (
 );
 CREATE INDEX issue_events_issue_idx ON issue_events (issue_id, created_at);
 
--- ── Документация проекта ───────────────────────────────────────────
 CREATE TABLE documents (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id   uuid         NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -200,7 +181,6 @@ CREATE TABLE documents (
     (kind = 'file' AND storage_key IS NOT NULL AND url IS NULL AND size_bytes > 0) OR
     (kind = 'link' AND url IS NOT NULL AND storage_key IS NULL)
   ),
-  -- связанная задача — только из этого проекта; задачу удалили → документ остаётся без задачи
   FOREIGN KEY (issue_id, project_id) REFERENCES issues (id, project_id) ON DELETE SET NULL (issue_id)
 );
 CREATE INDEX documents_project_idx ON documents (project_id, created_at DESC);
