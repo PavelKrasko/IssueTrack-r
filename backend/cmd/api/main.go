@@ -12,8 +12,8 @@ import (
 
 	"issuetracker/internal/config"
 	"issuetracker/internal/database"
+	"issuetracker/internal/storage"
 )
-
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
@@ -26,14 +26,23 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	pool, err := database.Connect(ctx, cfg.DatabaseURL, log)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) 
+	defer stop() 
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, log) 
+	if err != nil {                                         
+		return err                                          
+	}                                                       
+	defer pool.Close()                                      
+	log.Info("База подключена...")
+	if err := database.Migrate(ctx, pool, log); err != nil {
+		return err
+	}
+	store, err := storage.NewLocal(cfg.StorageDir)
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
-	log.Info("База подключена...")
+	log.Info("Хранилище файлов", "dir", cfg.StorageDir)
+	_ = store 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", otvet)
 	srv := &http.Server{
